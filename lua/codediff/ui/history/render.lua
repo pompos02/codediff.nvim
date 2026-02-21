@@ -133,6 +133,7 @@ function M.create(commits, git_root, tabpage, width, opts)
   })
 
   split:mount()
+  pcall(vim.api.nvim_buf_set_name, split.bufnr, "CodeDiff History [" .. tabpage .. "]")
 
   -- Track selected commit and file
   local selected_commit = nil

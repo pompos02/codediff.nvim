@@ -70,6 +70,8 @@ function M.create(session_config, filetype, on_ready)
     local mod_scratch = vim.api.nvim_create_buf(false, true)
     vim.bo[orig_scratch].buftype = "nofile"
     vim.bo[mod_scratch].buftype = "nofile"
+    pcall(vim.api.nvim_buf_set_name, orig_scratch, "CodeDiff " .. tabpage .. ".1")
+    pcall(vim.api.nvim_buf_set_name, mod_scratch, "CodeDiff " .. tabpage .. ".2")
     vim.api.nvim_win_set_buf(original_win, orig_scratch)
     vim.api.nvim_win_set_buf(modified_win, mod_scratch)
 

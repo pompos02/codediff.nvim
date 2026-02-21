@@ -51,6 +51,7 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
 
   -- Mount split first to get bufnr
   split:mount()
+  pcall(vim.api.nvim_buf_set_name, split.bufnr, "CodeDiff Explorer [" .. tabpage .. "]")
 
   -- Track selected path and group for highlighting
   local selected_path = nil
