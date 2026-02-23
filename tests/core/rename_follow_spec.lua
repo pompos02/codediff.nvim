@@ -3,16 +3,16 @@
 
 local git = require("codediff.core.git")
 
--- Helper: create a temp git repo with rename history
+-- Helper: create a temp git repo (uses table-form vim.fn.system for Windows compat)
 local function create_rename_repo()
   local dir = vim.fn.tempname()
   vim.fn.mkdir(dir, "p")
-  local function run(cmd)
-    return vim.fn.system("cd " .. vim.fn.shellescape(dir) .. " && git " .. cmd)
+  local function run(...)
+    return vim.fn.system(vim.list_extend({ "git", "-C", dir }, { ... }))
   end
   run("init")
-  run("config user.email 'test@test.com'")
-  run("config user.name 'test'")
+  run("config", "user.email", "test@test.com")
+  run("config", "user.name", "test")
   return dir, run
 end
 
@@ -20,14 +20,13 @@ describe("resolve_path_at_revision", function()
   it("Returns old path for a renamed file", function()
     local dir, run = create_rename_repo()
 
-    -- Create file, commit, rename, commit
     vim.fn.writefile({ "content" }, dir .. "/old.lua")
-    run("add .")
-    run("commit -m 'initial'")
-    local initial = vim.trim(run("rev-parse HEAD"))
+    run("add", ".")
+    run("commit", "-m", "initial")
+    local initial = vim.trim(run("rev-parse", "HEAD"))
 
-    run("mv old.lua new.lua")
-    run("commit -m 'rename'")
+    run("mv", "old.lua", "new.lua")
+    run("commit", "-m", "rename")
 
     local done = false
     local resolved = nil
@@ -49,14 +48,13 @@ describe("resolve_path_at_revision", function()
     local dir, run = create_rename_repo()
 
     vim.fn.writefile({ "content" }, dir .. "/stable.lua")
-    run("add .")
-    run("commit -m 'initial'")
-    local initial = vim.trim(run("rev-parse HEAD"))
+    run("add", ".")
+    run("commit", "-m", "initial")
+    local initial = vim.trim(run("rev-parse", "HEAD"))
 
-    -- Make another commit (no rename)
     vim.fn.writefile({ "modified" }, dir .. "/stable.lua")
-    run("add .")
-    run("commit -m 'modify'")
+    run("add", ".")
+    run("commit", "-m", "modify")
 
     local done = false
     local resolved = nil
