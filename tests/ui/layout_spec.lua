@@ -913,8 +913,9 @@ describe("Layout Manager", function()
     vim.w[orig_win].codediff_restore = 1
     vim.w[mod_win].codediff_restore = 1
 
-    -- Write a temp file to load
-    local tmp_file = "/tmp/test_untracked_layout.txt"
+    -- Write a temp file to load (use OS-appropriate temp dir)
+    local tmp_dir = vim.fn.has("win32") == 1 and (vim.fn.getenv("TEMP") or "C:\\Windows\\Temp") or "/tmp"
+    local tmp_file = tmp_dir .. "/test_untracked_layout.txt"
     vim.fn.writefile({"content"}, tmp_file)
 
     local side_by_side = require("codediff.ui.view.side_by_side")

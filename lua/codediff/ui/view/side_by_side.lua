@@ -388,7 +388,6 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
   -- Get existing session
   local session = lifecycle.get_session(tabpage)
   if not session then
-    vim.notify("No diff session found for tabpage", vim.log.levels.ERROR)
     return false
   end
 
@@ -397,7 +396,6 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
   local original_win, modified_win = lifecycle.get_windows(tabpage)
 
   if not old_original_buf or not old_modified_buf or not original_win or not modified_win then
-    vim.notify("Invalid diff session state", vim.log.levels.ERROR)
     return false
   end
 
