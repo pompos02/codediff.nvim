@@ -679,228 +679,121 @@ end
 -- Single-file display (no diff) for explorer special cases
 -- ============================================================================
 
---- Show a single file in the modified pane, closing the original pane
---- Used by explorer for untracked files (status "??")
+--- Core implementation for showing a single file without diff.
+--- Closes the empty pane and loads the file into the remaining pane.
 ---@param tabpage number
----@param file_path string Absolute path to the file to display
+---@param opts { keep: "original"|"modified", load_bufnr: number, original_path: string, modified_path: string, original_revision: string?, modified_revision: string? }
+local function show_single_file(tabpage, opts)
+  local session = lifecycle.get_session(tabpage)
+  if not session then return end
+
+  local orig_win, mod_win = lifecycle.get_windows(tabpage)
+  local highlights = require("codediff.ui.highlights")
+
+  -- Clear highlights from current session buffers
+  local old_orig_buf, old_mod_buf = lifecycle.get_buffers(tabpage)
+  if old_orig_buf and vim.api.nvim_buf_is_valid(old_orig_buf) then
+    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_highlight, 0, -1)
+    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_filler, 0, -1)
+  end
+  if old_mod_buf and vim.api.nvim_buf_is_valid(old_mod_buf) then
+    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_highlight, 0, -1)
+    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_filler, 0, -1)
+  end
+
+  -- Mark single-pane BEFORE closing window (prevents cleanup trigger)
+  session.single_pane = true
+
+  -- Close the unused window
+  local keep_win, close_win
+  if opts.keep == "modified" then
+    keep_win, close_win = mod_win, orig_win
+  else
+    keep_win, close_win = orig_win, mod_win
+  end
+
+  if close_win and vim.api.nvim_win_is_valid(close_win) then
+    vim.w[close_win].codediff_restore = nil
+    vim.api.nvim_win_close(close_win, true)
+  end
+
+  -- Load the file into the kept window
+  if keep_win and vim.api.nvim_win_is_valid(keep_win) then
+    vim.api.nvim_win_set_buf(keep_win, opts.load_bufnr)
+
+    -- Create a scratch buffer as placeholder for the empty side
+    local empty_buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[empty_buf].buftype = "nofile"
+
+    local orig_bufnr = opts.keep == "original" and opts.load_bufnr or empty_buf
+    local mod_bufnr = opts.keep == "modified" and opts.load_bufnr or empty_buf
+
+    lifecycle.update_buffers(tabpage, orig_bufnr, mod_bufnr)
+    lifecycle.update_paths(tabpage, opts.original_path or "", opts.modified_path or "")
+    lifecycle.update_revisions(tabpage, opts.original_revision, opts.modified_revision)
+    lifecycle.update_diff_result(tabpage, {})
+
+    local view_keymaps = require("codediff.ui.view.keymaps")
+    view_keymaps.setup_all_keymaps(tabpage, orig_bufnr, mod_bufnr, true)
+  end
+
+  layout.arrange(tabpage)
+end
+
+-- Load a real file from disk, return bufnr
+local function load_real_file(file_path)
+  local bufnr = vim.fn.bufadd(file_path)
+  vim.fn.bufload(bufnr)
+  return bufnr
+end
+
+-- Load a virtual file from git revision, return bufnr
+local function load_virtual_file(git_root, revision, file_path)
+  local virtual_file_mod = require("codediff.core.virtual_file")
+  local url = virtual_file_mod.create_url(git_root, revision, file_path)
+  local bufnr = vim.fn.bufadd(url)
+  vim.fn.bufload(bufnr)
+  return bufnr
+end
+
+--- Show an untracked file (status "??") — modified pane only
 function M.show_untracked_file(tabpage, file_path)
-  local session = lifecycle.get_session(tabpage)
-  if not session then return end
-
-  local orig_win, mod_win = lifecycle.get_windows(tabpage)
-  local highlights = require("codediff.ui.highlights")
-
-  -- Clear highlights from current session buffers
-  local old_orig_buf, old_mod_buf = lifecycle.get_buffers(tabpage)
-  if old_orig_buf and vim.api.nvim_buf_is_valid(old_orig_buf) then
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_filler, 0, -1)
-  end
-  if old_mod_buf and vim.api.nvim_buf_is_valid(old_mod_buf) then
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_filler, 0, -1)
-  end
-
-  -- Mark session as single-pane BEFORE closing window (prevents cleanup trigger)
-  session.single_pane = true
-
-  -- Close the original window (no content to show)
-  if orig_win and vim.api.nvim_win_is_valid(orig_win) then
-    vim.w[orig_win].codediff_restore = nil
-    vim.api.nvim_win_close(orig_win, true)
-  end
-
-  -- Load the untracked file into modified window
-  if mod_win and vim.api.nvim_win_is_valid(mod_win) then
-    local file_bufnr = vim.fn.bufadd(file_path)
-    vim.fn.bufload(file_bufnr)
-    vim.api.nvim_win_set_buf(mod_win, file_bufnr)
-
-    -- Use a scratch buffer as the "original" placeholder in the session
-    local empty_buf = vim.api.nvim_create_buf(false, true)
-    vim.bo[empty_buf].buftype = "nofile"
-
-    lifecycle.update_buffers(tabpage, empty_buf, file_bufnr)
-    lifecycle.update_paths(tabpage, "", file_path)
-    lifecycle.update_revisions(tabpage, nil, nil)
-    lifecycle.update_diff_result(tabpage, {})
-
-    local view_keymaps = require("codediff.ui.view.keymaps")
-    view_keymaps.setup_all_keymaps(tabpage, empty_buf, file_bufnr, true)
-  end
-
-  layout.arrange(tabpage)
+  show_single_file(tabpage, {
+    keep = "modified",
+    load_bufnr = load_real_file(file_path),
+    modified_path = file_path,
+  })
 end
 
---- Show a deleted file's old content in the original pane, closing the modified pane
---- Used by explorer for deleted files (status "D")
----@param tabpage number
----@param git_root string
----@param file_path string Relative path within git repo
----@param abs_path string Absolute path
----@param group string Explorer group ("staged" or "unstaged")
+--- Show a deleted file (status "D", working tree) — original pane only
 function M.show_deleted_file(tabpage, git_root, file_path, abs_path, group)
-  local session = lifecycle.get_session(tabpage)
-  if not session then return end
-
-  local orig_win, mod_win = lifecycle.get_windows(tabpage)
-  local highlights = require("codediff.ui.highlights")
-
-  -- Clear highlights from current session buffers
-  local old_orig_buf, old_mod_buf = lifecycle.get_buffers(tabpage)
-  if old_orig_buf and vim.api.nvim_buf_is_valid(old_orig_buf) then
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_filler, 0, -1)
-  end
-  if old_mod_buf and vim.api.nvim_buf_is_valid(old_mod_buf) then
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_filler, 0, -1)
-  end
-
-  -- Mark session as single-pane BEFORE closing window (prevents cleanup trigger)
-  session.single_pane = true
-
-  -- Close the modified window (no content to show)
-  if mod_win and vim.api.nvim_win_is_valid(mod_win) then
-    vim.w[mod_win].codediff_restore = nil
-    vim.api.nvim_win_close(mod_win, true)
-  end
-
-  -- Load the deleted file's old content into original window via virtual buffer
-  if orig_win and vim.api.nvim_win_is_valid(orig_win) then
-    local revision = (group == "staged") and "HEAD" or ":0"
-    local virtual_file_mod = require("codediff.core.virtual_file")
-    local url = virtual_file_mod.create_url(git_root, revision, file_path)
-    local file_bufnr = vim.fn.bufadd(url)
-    vim.fn.bufload(file_bufnr)
-    vim.api.nvim_win_set_buf(orig_win, file_bufnr)
-
-    -- Use a scratch buffer as the "modified" placeholder in the session
-    local empty_buf = vim.api.nvim_create_buf(false, true)
-    vim.bo[empty_buf].buftype = "nofile"
-
-    lifecycle.update_buffers(tabpage, file_bufnr, empty_buf)
-    lifecycle.update_paths(tabpage, abs_path, "")
-    lifecycle.update_revisions(tabpage, revision, nil)
-    lifecycle.update_diff_result(tabpage, {})
-
-    local view_keymaps = require("codediff.ui.view.keymaps")
-    view_keymaps.setup_all_keymaps(tabpage, file_bufnr, empty_buf, true)
-  end
-
-  layout.arrange(tabpage)
+  local revision = (group == "staged") and "HEAD" or ":0"
+  show_single_file(tabpage, {
+    keep = "original",
+    load_bufnr = load_virtual_file(git_root, revision, file_path),
+    original_path = abs_path,
+    original_revision = revision,
+  })
 end
 
---- Show an added file from a virtual revision (single-pane, modified side only)
---- Used by explorer for added files (status "A") in two-revision mode
----@param tabpage number
----@param git_root string
----@param file_path string Relative path within git repo
----@param revision string The revision that contains the file
+--- Show an added virtual file (status "A") — modified pane only
 function M.show_added_virtual_file(tabpage, git_root, file_path, revision)
-  local session = lifecycle.get_session(tabpage)
-  if not session then return end
-
-  local orig_win, mod_win = lifecycle.get_windows(tabpage)
-  local highlights = require("codediff.ui.highlights")
-
-  -- Clear highlights from current session buffers
-  local old_orig_buf, old_mod_buf = lifecycle.get_buffers(tabpage)
-  if old_orig_buf and vim.api.nvim_buf_is_valid(old_orig_buf) then
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_filler, 0, -1)
-  end
-  if old_mod_buf and vim.api.nvim_buf_is_valid(old_mod_buf) then
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_filler, 0, -1)
-  end
-
-  -- Mark single-pane before closing window
-  session.single_pane = true
-
-  -- Close the original window (file doesn't exist in base revision)
-  if orig_win and vim.api.nvim_win_is_valid(orig_win) then
-    vim.w[orig_win].codediff_restore = nil
-    vim.api.nvim_win_close(orig_win, true)
-  end
-
-  -- Load the added file into modified window via virtual buffer
-  if mod_win and vim.api.nvim_win_is_valid(mod_win) then
-    local virtual_file_mod = require("codediff.core.virtual_file")
-    local url = virtual_file_mod.create_url(git_root, revision, file_path)
-    local file_bufnr = vim.fn.bufadd(url)
-    vim.fn.bufload(file_bufnr)
-    vim.api.nvim_win_set_buf(mod_win, file_bufnr)
-
-    local empty_buf = vim.api.nvim_create_buf(false, true)
-    vim.bo[empty_buf].buftype = "nofile"
-
-    lifecycle.update_buffers(tabpage, empty_buf, file_bufnr)
-    lifecycle.update_paths(tabpage, "", file_path)
-    lifecycle.update_revisions(tabpage, nil, revision)
-    lifecycle.update_diff_result(tabpage, {})
-
-    local view_keymaps = require("codediff.ui.view.keymaps")
-    view_keymaps.setup_all_keymaps(tabpage, empty_buf, file_bufnr, true)
-  end
-
-  layout.arrange(tabpage)
+  show_single_file(tabpage, {
+    keep = "modified",
+    load_bufnr = load_virtual_file(git_root, revision, file_path),
+    modified_path = file_path,
+    modified_revision = revision,
+  })
 end
 
---- Show a deleted file from a virtual revision (single-pane, original side only)
---- Used by explorer for deleted files (status "D") in two-revision mode
----@param tabpage number
----@param git_root string
----@param file_path string Relative path within git repo
----@param revision string The revision that contains the file
+--- Show a deleted virtual file (status "D", two-revision mode) — original pane only
 function M.show_deleted_virtual_file(tabpage, git_root, file_path, revision)
-  local session = lifecycle.get_session(tabpage)
-  if not session then return end
-
-  local orig_win, mod_win = lifecycle.get_windows(tabpage)
-  local highlights = require("codediff.ui.highlights")
-
-  -- Clear highlights from current session buffers
-  local old_orig_buf, old_mod_buf = lifecycle.get_buffers(tabpage)
-  if old_orig_buf and vim.api.nvim_buf_is_valid(old_orig_buf) then
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_orig_buf, highlights.ns_filler, 0, -1)
-  end
-  if old_mod_buf and vim.api.nvim_buf_is_valid(old_mod_buf) then
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_highlight, 0, -1)
-    vim.api.nvim_buf_clear_namespace(old_mod_buf, highlights.ns_filler, 0, -1)
-  end
-
-  -- Mark single-pane before closing window
-  session.single_pane = true
-
-  -- Close the modified window (file doesn't exist in target revision)
-  if mod_win and vim.api.nvim_win_is_valid(mod_win) then
-    vim.w[mod_win].codediff_restore = nil
-    vim.api.nvim_win_close(mod_win, true)
-  end
-
-  -- Load the deleted file into original window via virtual buffer
-  if orig_win and vim.api.nvim_win_is_valid(orig_win) then
-    local virtual_file_mod = require("codediff.core.virtual_file")
-    local url = virtual_file_mod.create_url(git_root, revision, file_path)
-    local file_bufnr = vim.fn.bufadd(url)
-    vim.fn.bufload(file_bufnr)
-    vim.api.nvim_win_set_buf(orig_win, file_bufnr)
-
-    local empty_buf = vim.api.nvim_create_buf(false, true)
-    vim.bo[empty_buf].buftype = "nofile"
-
-    lifecycle.update_buffers(tabpage, file_bufnr, empty_buf)
-    lifecycle.update_paths(tabpage, file_path, "")
-    lifecycle.update_revisions(tabpage, revision, nil)
-    lifecycle.update_diff_result(tabpage, {})
-
-    local view_keymaps = require("codediff.ui.view.keymaps")
-    view_keymaps.setup_all_keymaps(tabpage, file_bufnr, empty_buf, true)
-  end
-
-  layout.arrange(tabpage)
+  show_single_file(tabpage, {
+    keep = "original",
+    load_bufnr = load_virtual_file(git_root, revision, file_path),
+    original_path = file_path,
+    original_revision = revision,
+  })
 end
 
 return M
