@@ -9,13 +9,14 @@
 // All thresholds and logic match VSCode exactly.
 // ============================================================================
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "compute_moved_lines.h"
 #include "myers.h"
 #include "sequence.h"
 #include "utils.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 // ============================================================================
 // Timeout helper
@@ -474,9 +475,6 @@ static bool are_lines_similar(const char *line1, const char *line2, MoveTimeout 
       seq2->destroy(seq2);
     return false;
   }
-
-  int s1len = seq1->getLength(seq1);
-  int s2len = seq2->getLength(seq2);
 
   // Run Myers diff
   bool hit_timeout = false;
