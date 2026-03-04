@@ -417,9 +417,15 @@ function M.setup_all_keymaps(tabpage, original_bufnr, modified_bufnr, is_explore
       return
     end
 
+    local stage_orig_buf, stage_mod_buf = lifecycle.get_buffers(tabpage)
+    if not stage_orig_buf or not stage_mod_buf or not vim.api.nvim_buf_is_valid(stage_orig_buf) or not vim.api.nvim_buf_is_valid(stage_mod_buf) then
+      vim.notify("Diff buffers are no longer available", vim.log.levels.WARN)
+      return
+    end
+
     -- Read lines from both buffers for this hunk
-    local orig_lines = vim.api.nvim_buf_get_lines(original_bufnr, hunk.original.start_line - 1, hunk.original.end_line - 1, false)
-    local mod_lines = vim.api.nvim_buf_get_lines(modified_bufnr, hunk.modified.start_line - 1, hunk.modified.end_line - 1, false)
+    local orig_lines = vim.api.nvim_buf_get_lines(stage_orig_buf, hunk.original.start_line - 1, hunk.original.end_line - 1, false)
+    local mod_lines = vim.api.nvim_buf_get_lines(stage_mod_buf, hunk.modified.start_line - 1, hunk.modified.end_line - 1, false)
 
     local patch = build_hunk_patch(file_path, orig_lines, mod_lines, hunk.original.start_line, hunk.modified.start_line)
 
@@ -498,9 +504,15 @@ function M.setup_all_keymaps(tabpage, original_bufnr, modified_bufnr, is_explore
       return
     end
 
+    local unstage_orig_buf, unstage_mod_buf = lifecycle.get_buffers(tabpage)
+    if not unstage_orig_buf or not unstage_mod_buf or not vim.api.nvim_buf_is_valid(unstage_orig_buf) or not vim.api.nvim_buf_is_valid(unstage_mod_buf) then
+      vim.notify("Diff buffers are no longer available", vim.log.levels.WARN)
+      return
+    end
+
     -- Read lines from both buffers for this hunk
-    local orig_lines = vim.api.nvim_buf_get_lines(original_bufnr, hunk.original.start_line - 1, hunk.original.end_line - 1, false)
-    local mod_lines = vim.api.nvim_buf_get_lines(modified_bufnr, hunk.modified.start_line - 1, hunk.modified.end_line - 1, false)
+    local orig_lines = vim.api.nvim_buf_get_lines(unstage_orig_buf, hunk.original.start_line - 1, hunk.original.end_line - 1, false)
+    local mod_lines = vim.api.nvim_buf_get_lines(unstage_mod_buf, hunk.modified.start_line - 1, hunk.modified.end_line - 1, false)
 
     local patch = build_hunk_patch(file_path, orig_lines, mod_lines, hunk.original.start_line, hunk.modified.start_line)
 
@@ -584,9 +596,15 @@ function M.setup_all_keymaps(tabpage, original_bufnr, modified_bufnr, is_explore
         return
       end
 
+      local discard_orig_buf, discard_mod_buf = lifecycle.get_buffers(tabpage)
+      if not discard_orig_buf or not discard_mod_buf or not vim.api.nvim_buf_is_valid(discard_orig_buf) or not vim.api.nvim_buf_is_valid(discard_mod_buf) then
+        vim.notify("Diff buffers are no longer available", vim.log.levels.WARN)
+        return
+      end
+
       -- Read lines from both buffers for this hunk
-      local orig_lines = vim.api.nvim_buf_get_lines(original_bufnr, hunk.original.start_line - 1, hunk.original.end_line - 1, false)
-      local mod_lines = vim.api.nvim_buf_get_lines(modified_bufnr, hunk.modified.start_line - 1, hunk.modified.end_line - 1, false)
+      local orig_lines = vim.api.nvim_buf_get_lines(discard_orig_buf, hunk.original.start_line - 1, hunk.original.end_line - 1, false)
+      local mod_lines = vim.api.nvim_buf_get_lines(discard_mod_buf, hunk.modified.start_line - 1, hunk.modified.end_line - 1, false)
 
       local patch = build_hunk_patch(file_path, orig_lines, mod_lines, hunk.original.start_line, hunk.modified.start_line)
 
@@ -660,6 +678,11 @@ function M.setup_all_keymaps(tabpage, original_bufnr, modified_bufnr, is_explore
   end
   if keymaps.open_in_prev_tab then
     lifecycle.set_tab_keymap(tabpage, "n", keymaps.open_in_prev_tab, open_in_prev_tab, { desc = "Open buffer in previous tab" })
+  end
+  if keymaps.toggle_layout then
+    lifecycle.set_tab_keymap(tabpage, "n", keymaps.toggle_layout, function()
+      require("codediff.ui.view").toggle_layout(tabpage)
+    end, { desc = "Toggle diff layout" })
   end
 
   -- Toggle stage/unstage (- key) - only in explorer mode

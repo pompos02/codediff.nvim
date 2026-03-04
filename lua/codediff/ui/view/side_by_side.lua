@@ -28,6 +28,50 @@ local setup_auto_refresh = render.setup_auto_refresh
 local setup_conflict_result_window = conflict_window.setup_conflict_result_window
 local setup_all_keymaps = view_keymaps.setup_all_keymaps
 
+local function copy_session_config(session_config)
+  return {
+    mode = session_config.mode,
+    git_root = session_config.git_root,
+    original_path = session_config.original_path or "",
+    modified_path = session_config.modified_path or "",
+    original_revision = session_config.original_revision,
+    modified_revision = session_config.modified_revision,
+    conflict = session_config.conflict,
+    line_range = session_config.line_range,
+  }
+end
+
+local function set_display_state(tabpage, kind, data)
+  lifecycle.update_layout(tabpage, "side-by-side")
+  local display_state = vim.tbl_extend("force", { kind = kind }, data or {})
+  lifecycle.update_display_state(tabpage, display_state)
+  if kind ~= "diff" then
+    lifecycle.update_diff_config(tabpage, nil)
+  end
+end
+
+local function build_single_file_state(tabpage, opts)
+  local session = lifecycle.get_session(tabpage)
+  return {
+    kind = "single_file",
+    side = opts.keep,
+    load = {
+      path = opts.file_path,
+      revision = opts.load_revision,
+      git_root = opts.load_git_root,
+      rel_path = opts.rel_path,
+    },
+    session_config = {
+      mode = session and session.mode or "explorer",
+      git_root = opts.load_git_root or (session and session.git_root) or nil,
+      original_path = opts.original_path or "",
+      modified_path = opts.modified_path or "",
+      original_revision = opts.original_revision,
+      modified_revision = opts.modified_revision,
+    },
+  }
+end
+
 -- ============================================================================
 -- Create
 -- ============================================================================
@@ -156,6 +200,7 @@ function M.create(session_config, filetype, on_ready)
         setup_all_keymaps(tabpage, ob, mb, is_explorer)
       end
     )
+    set_display_state(tabpage, "empty")
   else
     -- Normal mode: Full rendering
     local original_is_virtual = is_virtual_revision(session_config.original_revision)
@@ -234,6 +279,8 @@ function M.create(session_config, filetype, on_ready)
                   conflict.setup_keymaps(tabpage)
                 end
               )
+              lifecycle.update_diff_config(tabpage, copy_session_config(session_config))
+              set_display_state(tabpage, "diff", { session_config = copy_session_config(session_config) })
 
               -- Setup auto-refresh for consistency (both buffers are virtual in conflict mode)
               setup_auto_refresh(original_info.bufnr, modified_info.bufnr, true, true)
@@ -292,6 +339,8 @@ function M.create(session_config, filetype, on_ready)
               setup_all_keymaps(tabpage, ob, mb, is_explorer)
             end
           )
+          lifecycle.update_diff_config(tabpage, copy_session_config(session_config))
+          set_display_state(tabpage, "diff", { session_config = copy_session_config(session_config) })
 
           -- Enable auto-refresh for real file buffers only
           setup_auto_refresh(original_info.bufnr, modified_info.bufnr, original_is_virtual, modified_is_virtual)
@@ -409,7 +458,10 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
   local old_original_buf, old_modified_buf = lifecycle.get_buffers(tabpage)
   local original_win, modified_win = lifecycle.get_windows(tabpage)
 
-  if not old_original_buf or not old_modified_buf or not original_win or not modified_win then
+  if not old_original_buf or not old_modified_buf then
+    return false
+  end
+  if not original_win and not modified_win then
     return false
   end
 
@@ -435,14 +487,14 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
   if session.single_pane then
     local split_cmd = config.options.diff.original_position == "right" and "leftabove vsplit" or "rightbelow vsplit"
 
-    if not vim.api.nvim_win_is_valid(original_win) then
+    if not original_win or not vim.api.nvim_win_is_valid(original_win) then
       -- Original was closed (untracked file) — recreate it to the left of modified
       vim.api.nvim_set_current_win(modified_win)
       vim.cmd(config.options.diff.original_position == "right" and "rightbelow vsplit" or "leftabove vsplit")
       original_win = vim.api.nvim_get_current_win()
       vim.w[original_win].codediff_restore = 1
       session.original_win = original_win
-    elseif not vim.api.nvim_win_is_valid(modified_win) then
+    elseif not modified_win or not vim.api.nvim_win_is_valid(modified_win) then
       -- Modified was closed (deleted file) — recreate it to the right of original
       vim.api.nvim_set_current_win(original_win)
       vim.cmd(split_cmd)
@@ -508,6 +560,8 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
             lifecycle.update_revisions(tabpage, session_config.original_revision, session_config.modified_revision)
             lifecycle.update_diff_result(tabpage, conflict_diffs.base_to_modified_diff)
             lifecycle.update_changedtick(tabpage, vim.api.nvim_buf_get_changedtick(original_info.bufnr), vim.api.nvim_buf_get_changedtick(modified_info.bufnr))
+            lifecycle.update_diff_config(tabpage, copy_session_config(session_config))
+            set_display_state(tabpage, "diff", { session_config = copy_session_config(session_config) })
 
             setup_auto_refresh(original_info.bufnr, modified_info.bufnr, true, true)
 
@@ -542,6 +596,8 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
         lifecycle.update_revisions(tabpage, session_config.original_revision, session_config.modified_revision)
         lifecycle.update_diff_result(tabpage, lines_diff)
         lifecycle.update_changedtick(tabpage, vim.api.nvim_buf_get_changedtick(original_info.bufnr), vim.api.nvim_buf_get_changedtick(modified_info.bufnr))
+        lifecycle.update_diff_config(tabpage, copy_session_config(session_config))
+        set_display_state(tabpage, "diff", { session_config = copy_session_config(session_config) })
 
         setup_auto_refresh(original_info.bufnr, modified_info.bufnr, original_is_virtual, modified_is_virtual)
 
@@ -704,6 +760,7 @@ local function show_single_file(tabpage, opts)
     return
   end
 
+  lifecycle.update_layout(tabpage, "side-by-side")
   local orig_win, mod_win = lifecycle.get_windows(tabpage)
   local highlights = require("codediff.ui.highlights")
 
@@ -729,15 +786,32 @@ local function show_single_file(tabpage, opts)
     keep_win, close_win = orig_win, mod_win
   end
 
+  if keep_win == close_win then
+    close_win = nil
+  end
+  if (not keep_win or not vim.api.nvim_win_is_valid(keep_win)) and close_win and vim.api.nvim_win_is_valid(close_win) then
+    keep_win = close_win
+    close_win = nil
+  end
+
   if close_win and vim.api.nvim_win_is_valid(close_win) then
     vim.w[close_win].codediff_restore = nil
     vim.api.nvim_win_close(close_win, true)
+    close_win = nil
   end
 
   -- Load the file into the kept window
   if keep_win and vim.api.nvim_win_is_valid(keep_win) then
     vim.api.nvim_win_set_buf(keep_win, opts.load_bufnr)
     welcome_window.sync(keep_win)
+
+    if opts.keep == "original" then
+      session.original_win = keep_win
+      session.modified_win = nil
+    else
+      session.original_win = nil
+      session.modified_win = keep_win
+    end
 
     -- Create a scratch buffer as placeholder for the empty side
     local empty_buf = vim.api.nvim_create_buf(false, true)
@@ -750,9 +824,15 @@ local function show_single_file(tabpage, opts)
     lifecycle.update_paths(tabpage, opts.original_path or "", opts.modified_path or "")
     lifecycle.update_revisions(tabpage, opts.original_revision, opts.modified_revision)
     lifecycle.update_diff_result(tabpage, {})
+    lifecycle.update_diff_config(tabpage, nil)
+    if opts.display_state then
+      lifecycle.update_display_state(tabpage, opts.display_state)
+    else
+      lifecycle.update_display_state(tabpage, build_single_file_state(tabpage, opts))
+    end
 
     local view_keymaps = require("codediff.ui.view.keymaps")
-    view_keymaps.setup_all_keymaps(tabpage, orig_bufnr, mod_bufnr, true)
+    view_keymaps.setup_all_keymaps(tabpage, orig_bufnr, mod_bufnr, session.mode == "explorer")
   end
 
   layout.arrange(tabpage)
@@ -777,11 +857,86 @@ local function load_virtual_file(git_root, revision, file_path)
   return bufnr
 end
 
+function M.show_placeholder(tabpage)
+  local session = lifecycle.get_session(tabpage)
+  if not session then
+    return
+  end
+
+  lifecycle.update_layout(tabpage, "side-by-side")
+  session.single_pane = nil
+
+  local original_win = session.original_win
+  local modified_win = session.modified_win
+  local current_win = (modified_win and vim.api.nvim_win_is_valid(modified_win) and modified_win)
+    or (original_win and vim.api.nvim_win_is_valid(original_win) and original_win)
+    or vim.api.nvim_get_current_win()
+
+  if not original_win or not vim.api.nvim_win_is_valid(original_win) then
+    original_win = current_win
+  end
+
+  if not modified_win or not vim.api.nvim_win_is_valid(modified_win) or modified_win == original_win then
+    local split_cmd = config.options.diff.original_position == "right" and "leftabove vsplit" or "rightbelow vsplit"
+    vim.api.nvim_set_current_win(original_win)
+    vim.cmd(split_cmd)
+    modified_win = vim.api.nvim_get_current_win()
+    vim.w[modified_win].codediff_restore = 1
+  end
+
+  local orig_scratch = vim.api.nvim_create_buf(false, true)
+  local mod_scratch = vim.api.nvim_create_buf(false, true)
+  vim.bo[orig_scratch].buftype = "nofile"
+  vim.bo[mod_scratch].buftype = "nofile"
+
+  vim.api.nvim_win_set_buf(original_win, orig_scratch)
+  vim.api.nvim_win_set_buf(modified_win, mod_scratch)
+  welcome_window.sync(original_win)
+  welcome_window.sync(modified_win)
+
+  session.original_win = original_win
+  session.modified_win = modified_win
+
+  lifecycle.update_buffers(tabpage, orig_scratch, mod_scratch)
+  lifecycle.update_paths(tabpage, "", "")
+  lifecycle.update_revisions(tabpage, nil, nil)
+  lifecycle.update_diff_result(tabpage, {})
+  set_display_state(tabpage, "empty")
+
+  local view_keymaps = require("codediff.ui.view.keymaps")
+  view_keymaps.setup_all_keymaps(tabpage, orig_scratch, mod_scratch, session.mode == "explorer")
+  layout.arrange(tabpage)
+end
+
+function M.show_single_file_preview(tabpage, preview)
+  local load_bufnr
+  if preview.load.revision and preview.load.git_root then
+    load_bufnr = load_virtual_file(preview.load.git_root, preview.load.revision, preview.load.rel_path or preview.load.path)
+  else
+    load_bufnr = load_real_file(preview.load.path)
+  end
+
+  show_single_file(tabpage, {
+    keep = preview.side,
+    load_bufnr = load_bufnr,
+    original_path = preview.session_config.original_path,
+    modified_path = preview.session_config.modified_path,
+    original_revision = preview.session_config.original_revision,
+    modified_revision = preview.session_config.modified_revision,
+    file_path = preview.load.path,
+    load_revision = preview.load.revision,
+    load_git_root = preview.load.git_root,
+    rel_path = preview.load.rel_path,
+    display_state = preview,
+  })
+end
+
 --- Show an untracked file (status "??") — modified pane only
 function M.show_untracked_file(tabpage, file_path)
   show_single_file(tabpage, {
     keep = "modified",
     load_bufnr = load_real_file(file_path),
+    file_path = file_path,
     modified_path = file_path,
   })
 end
@@ -792,6 +947,10 @@ function M.show_deleted_file(tabpage, git_root, file_path, abs_path, group)
   show_single_file(tabpage, {
     keep = "original",
     load_bufnr = load_virtual_file(git_root, revision, file_path),
+    file_path = abs_path,
+    load_revision = revision,
+    load_git_root = git_root,
+    rel_path = file_path,
     original_path = abs_path,
     original_revision = revision,
   })
@@ -802,6 +961,10 @@ function M.show_added_virtual_file(tabpage, git_root, file_path, revision)
   show_single_file(tabpage, {
     keep = "modified",
     load_bufnr = load_virtual_file(git_root, revision, file_path),
+    file_path = file_path,
+    load_revision = revision,
+    load_git_root = git_root,
+    rel_path = file_path,
     modified_path = file_path,
     modified_revision = revision,
   })
@@ -812,6 +975,10 @@ function M.show_deleted_virtual_file(tabpage, git_root, file_path, revision)
   show_single_file(tabpage, {
     keep = "original",
     load_bufnr = load_virtual_file(git_root, revision, file_path),
+    file_path = file_path,
+    load_revision = revision,
+    load_git_root = git_root,
+    rel_path = file_path,
     original_path = file_path,
     original_revision = revision,
   })
@@ -822,6 +989,7 @@ function M.show_welcome(tabpage, load_bufnr)
   show_single_file(tabpage, {
     keep = "modified",
     load_bufnr = load_bufnr,
+    display_state = { kind = "welcome" },
   })
 end
 

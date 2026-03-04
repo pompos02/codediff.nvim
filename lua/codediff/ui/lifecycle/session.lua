@@ -90,6 +90,9 @@ function M.create_session(
     modified_state = modified_state,
 
     -- Lifecycle state
+    layout = "side-by-side",
+    display_state = nil,
+    diff_config = nil,
     suspended = false,
     stored_diff_result = lines_diff,
     changedtick = {
@@ -150,10 +153,10 @@ function M.create_session(
       return
     end
     -- Normal diff mode: disable winbar
-    if sess and vim.api.nvim_win_is_valid(sess.original_win) then
+    if sess and sess.original_win and vim.api.nvim_win_is_valid(sess.original_win) then
       vim.wo[sess.original_win].winbar = ""
     end
-    if sess and vim.api.nvim_win_is_valid(sess.modified_win) then
+    if sess and sess.modified_win and vim.api.nvim_win_is_valid(sess.modified_win) then
       vim.wo[sess.modified_win].winbar = ""
     end
   end

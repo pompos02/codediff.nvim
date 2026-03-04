@@ -8,6 +8,48 @@ local nodes_module = require("codediff.ui.explorer.nodes")
 local tree_module = require("codediff.ui.explorer.tree")
 local keymaps_module = require("codediff.ui.explorer.keymaps")
 local refresh_module = require("codediff.ui.explorer.refresh")
+local welcome = require("codediff.ui.welcome")
+
+local function should_show_welcome(explorer)
+  if not explorer or not explorer.git_root or explorer.dir1 or explorer.dir2 then
+    return false
+  end
+
+  local status = explorer.status_result or {}
+  local total_files = #(status.unstaged or {}) + #(status.staged or {}) + #(status.conflicts or {})
+  return total_files == 0
+end
+
+local function show_welcome_page(explorer)
+  local lifecycle = require("codediff.ui.lifecycle")
+  local session = lifecycle.get_session(explorer.tabpage)
+  if not session then
+    return false
+  end
+
+  local mod_win = session.modified_win
+  if not mod_win or not vim.api.nvim_win_is_valid(mod_win) then
+    return false
+  end
+
+  if session.layout == "inline" then
+    local welcome_buf = welcome.create_buffer(vim.api.nvim_win_get_width(mod_win), vim.api.nvim_win_get_height(mod_win))
+    require("codediff.ui.view.inline_view").show_welcome(explorer.tabpage, welcome_buf)
+    return true
+  end
+
+  local orig_win = session.original_win
+  local width = vim.api.nvim_win_get_width(mod_win)
+  local height = vim.api.nvim_win_get_height(mod_win)
+  if orig_win and vim.api.nvim_win_is_valid(orig_win) then
+    width = vim.api.nvim_win_get_width(orig_win) + width + 1
+    height = vim.api.nvim_win_get_height(orig_win)
+  end
+
+  local welcome_buf = welcome.create_buffer(width, height)
+  require("codediff.ui.view.side_by_side").show_welcome(explorer.tabpage, welcome_buf)
+  return true
+end
 
 function M.create(status_result, git_root, tabpage, width, base_revision, target_revision, opts)
   opts = opts or {}
@@ -132,12 +174,14 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
     on_file_select = nil, -- Will be set below
     current_file_path = nil, -- Track currently selected file
     current_file_group = nil, -- Track currently selected file's group (staged/unstaged)
+    current_selection = nil, -- Full file selection used to replay current state
     is_hidden = false, -- Track visibility state
     visible_groups = vim.deepcopy(explorer_config.visible_groups or { staged = true, unstaged = true, conflicts = true }),
   }
 
   -- File selection callback - manages its own lifecycle
-  local function on_file_select(file_data)
+  local function on_file_select(file_data, opts)
+    opts = opts or {}
     local git = require("codediff.core.git")
     local view = require("codediff.ui.view")
     local lifecycle = require("codediff.ui.lifecycle")
@@ -164,7 +208,7 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
 
       -- Check if already displaying same file
       local session = lifecycle.get_session(tabpage)
-      if session and session.original_path == original_path and session.modified_path == modified_path then
+      if not opts.force and session and session.original_path == original_path and session.modified_path == modified_path then
         return
       end
 
@@ -190,7 +234,9 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
       vim.schedule(function()
         local sess = lifecycle.get_session(tabpage)
         if sess and sess.layout == "inline" then
-          require("codediff.ui.view.inline_view").show_single_file(tabpage, abs_path)
+          require("codediff.ui.view.inline_view").show_single_file(tabpage, abs_path, {
+            side = "modified",
+          })
         else
           require("codediff.ui.view.side_by_side").show_untracked_file(tabpage, abs_path)
         end
@@ -206,19 +252,31 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
 
         if base_revision and target_revision and target_revision ~= "WORKING" then
           if is_inline then
-            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, { revision = target_revision, git_root = git_root, rel_path = file_path })
+            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, {
+              revision = target_revision,
+              git_root = git_root,
+              rel_path = file_path,
+              side = "modified",
+            })
           else
             require("codediff.ui.view.side_by_side").show_added_virtual_file(tabpage, git_root, file_path, target_revision)
           end
         elseif group == "staged" then
           if is_inline then
-            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, { revision = ":0", git_root = git_root, rel_path = file_path })
+            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, {
+              revision = ":0",
+              git_root = git_root,
+              rel_path = file_path,
+              side = "modified",
+            })
           else
             require("codediff.ui.view.side_by_side").show_added_virtual_file(tabpage, git_root, file_path, ":0")
           end
         else
           if is_inline then
-            require("codediff.ui.view.inline_view").show_single_file(tabpage, abs_path)
+            require("codediff.ui.view.inline_view").show_single_file(tabpage, abs_path, {
+              side = "modified",
+            })
           else
             require("codediff.ui.view.side_by_side").show_untracked_file(tabpage, abs_path)
           end
@@ -235,14 +293,24 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
 
         if base_revision and target_revision and target_revision ~= "WORKING" then
           if is_inline then
-            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, { revision = base_revision, git_root = git_root, rel_path = file_path })
+            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, {
+              revision = base_revision,
+              git_root = git_root,
+              rel_path = file_path,
+              side = "original",
+            })
           else
             require("codediff.ui.view.side_by_side").show_deleted_virtual_file(tabpage, git_root, file_path, base_revision)
           end
         else
           if is_inline then
             local revision = (group == "staged") and "HEAD" or ":0"
-            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, { revision = revision, git_root = git_root, rel_path = file_path })
+            require("codediff.ui.view.inline_view").show_single_file(tabpage, file_path, {
+              revision = revision,
+              git_root = git_root,
+              rel_path = file_path,
+              side = "original",
+            })
           else
             require("codediff.ui.view.side_by_side").show_deleted_file(tabpage, git_root, file_path, abs_path, group)
           end
@@ -257,7 +325,7 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
     if session then
       local is_same_file = (session.modified_path == abs_path or (session.git_root and session.original_path == file_path))
 
-      if is_same_file then
+      if is_same_file and not opts.force then
         -- Check if it's the same diff comparison
         local is_staged_diff = group == "staged"
         local current_is_staged = session.modified_revision == ":0"
@@ -391,13 +459,14 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
   end
 
   -- Wrap on_file_select to track current file and group
-  explorer.on_file_select = function(file_data)
+  explorer.on_file_select = function(file_data, opts)
     explorer.current_file_path = file_data.path
     explorer.current_file_group = file_data.group
+    explorer.current_selection = vim.deepcopy(file_data)
     selected_path = file_data.path
     selected_group = file_data.group
     tree:render()
-    on_file_select(file_data)
+    on_file_select(file_data, opts)
   end
 
   -- Setup keymaps (delegated to keymaps module)
@@ -484,6 +553,36 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
 
   return explorer
 end
+
+function M.rerender_current(explorer)
+  if not explorer then
+    return false
+  end
+
+  if explorer.current_selection then
+    explorer.on_file_select(vim.deepcopy(explorer.current_selection), { force = true })
+    return true
+  end
+
+  local lifecycle = require("codediff.ui.lifecycle")
+  local session = lifecycle.get_session(explorer.tabpage)
+  if not session then
+    return false
+  end
+
+  if should_show_welcome(explorer) and show_welcome_page(explorer) then
+    return true
+  end
+
+  if session.layout == "inline" then
+    require("codediff.ui.view.inline_view").show_placeholder(explorer.tabpage)
+  else
+    require("codediff.ui.view.side_by_side").show_placeholder(explorer.tabpage)
+  end
+  return true
+end
+
+M.show_welcome_page = show_welcome_page
 
 -- Setup auto-refresh on file save and focus
 
