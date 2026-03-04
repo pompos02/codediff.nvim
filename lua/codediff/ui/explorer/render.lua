@@ -469,6 +469,13 @@ function M.create(status_result, git_root, tabpage, width, base_revision, target
     on_file_select(file_data, opts)
   end
 
+  -- Clear selection highlight (used when showing welcome page)
+  explorer.clear_selection = function()
+    selected_path = nil
+    selected_group = nil
+    tree:render()
+  end
+
   -- Setup keymaps (delegated to keymaps module)
   keymaps_module.setup(explorer)
 

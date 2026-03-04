@@ -256,6 +256,9 @@ function M.refresh(explorer)
         explorer.current_file_path = nil
         explorer.current_file_group = nil
         explorer.current_selection = nil
+        if explorer.clear_selection then
+          explorer.clear_selection()
+        end
       end
 
       local show_welcome_page = require("codediff.ui.explorer.render").show_welcome_page
